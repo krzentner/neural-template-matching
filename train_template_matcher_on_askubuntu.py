@@ -106,7 +106,7 @@ def train():
                 running_loss = 0.0
                 running_accuracy = 0.0
                 running_samples = 0
-            if i % 10000 and i > 0:
+            if i % 10000 == 0 and i > 0:
                 print('Saving checkpoint mid epoch')
                 checkpoint = {
                     'model': net.state_dict(),
