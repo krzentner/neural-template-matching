@@ -43,7 +43,7 @@ def train():
 
         random.shuffle(train_pairs)
 
-        for pair_index, (first_question, second_question, should_match) in enumerate(train_pairs):
+        for i, (first_question, second_question, should_match) in enumerate(train_pairs):
             if H:
                 first_question, second_question, should_match = train_pairs[2]
             first_title = question_titles[first_question]
@@ -55,13 +55,13 @@ def train():
                 if H:
                     a = first_title
                     b = second_title
-                for i, w in enumerate(a):
+                for index_in_a, w in enumerate(a):
                     if H:
-                        i, w = next(enumerate(a))
+                        index_in_a, w = next(enumerate(a))
                     if len(w) > 2 and w in b:
                         w_slot = random.randrange(template_matcher.TEMPLATE_SLOT_SIZE)
                         w_template = list(a)
-                        w_template[i] = f'<slot {w_slot}>'
+                        w_template[index_in_a] = f'<slot {w_slot}>'
                         n_slots = 1
 
                         sentences = []
@@ -89,11 +89,15 @@ def train():
                         slot_matches_flat = slot_matches.flatten(0, 2)
                         slot_expectations_flat = slot_expectations.flatten(0, 3)
                         loss = slot_crit(slot_matches_flat, slot_expectations_flat)
+                        best_slot_guess = slot_matches_flat.argmax()
 
                         total_loss = match_loss + loss
                         total_loss.backward()
                         opt.step()
 
+                        accuracy = ((best_slot_guess == slot_expectations_flat).to(torch.float32)).mean()
+
+                        running_accuracy = (running_samples * running_accuracy + accuracy) / (running_samples + 1)
                         running_loss = (running_samples * running_loss + total_loss) / (1 + running_samples)
                         running_samples += 1
 
@@ -102,6 +106,14 @@ def train():
                 running_loss = 0.0
                 running_accuracy = 0.0
                 running_samples = 0
+            if i % 10000 and i > 0:
+                print('Saving checkpoint mid epoch')
+                checkpoint = {
+                    'model': net.state_dict(),
+                    'opt': opt.state_dict(),
+                    'epoch': epoch,
+                }
+                torch.save(checkpoint, 'template_matcher_askubuntu_latest.pt')
         checkpoint = {
             'model': net.state_dict(),
             'opt': opt.state_dict(),
