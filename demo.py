@@ -1,14 +1,9 @@
 import os
 import template_matcher
-
-net = template_matcher.TemplateMatcher()
+import torch
 
 try:
-    checkpoint = torch.load('template_matcher_askubuntu_latest.pt')
-    net.load_state_dict(checkpoint['model'])
-    torch.save(net, f'template_matcher_askubuntu_latest.model')
-    epoch = checkpoint['epoch']
-    print(f'Successfully loaded epoch {epoch}.')
+    net = torch.load('template_matcher_askubuntu_latest.model')
 except Exception as e:
     print('Could not load template matcher.')
     raise e

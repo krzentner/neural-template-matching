@@ -106,7 +106,7 @@ def train():
                 running_loss = 0.0
                 running_accuracy = 0.0
                 running_samples = 0
-            if i % 10000 == 0 and i > 0:
+            if i % 1000 == 0 and i > 0:
                 print('Saving checkpoint mid epoch')
                 checkpoint = {
                     'model': net.state_dict(),
@@ -114,6 +114,7 @@ def train():
                     'epoch': epoch,
                 }
                 torch.save(checkpoint, 'template_matcher_askubuntu_latest.pt')
+                torch.save(net, f'template_matcher_askubuntu_latest.model')
         checkpoint = {
             'model': net.state_dict(),
             'opt': opt.state_dict(),
