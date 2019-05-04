@@ -10,8 +10,11 @@ WEIGHT_FILE = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_51
 
 ELMO_SIZE = 2048
 HIDDEN_SIZE = 1024
+GLOBAL_TEMPLATE_ENCODING_SIZE = 512
 TEMPLATE_ENCODING_SIZE = 512
 TEMPLATE_ENCODING_SIZE_DIR = int(TEMPLATE_ENCODING_SIZE / 2)
+TEMPLATE_ENCODER_HIDDEN_SIZE = 512
+INPUT_ENCODER_HIDDEN_SIZE = 512
 TEMPLATE_SLOT_SIZE = 1
 
 H = False
@@ -34,18 +37,49 @@ class TemplateMatcher(nn.Module):
         # Fortunately, we can skip this by pickling the whole model.
         self.elmo = Elmo(OPTIONS_FILE, WEIGHT_FILE, 2, dropout=0)
         self.template_encoder = nn.GRU(ELMO_SIZE + TEMPLATE_SLOT_SIZE,
-                                       TEMPLATE_ENCODING_SIZE_DIR,
-                                       num_layers=2, batch_first=True,
+                                       TEMPLATE_ENCODER_HIDDEN_SIZE,
+                                       num_layers=5, batch_first=True,
                                        bidirectional=True)
-        self.input_encoder = nn.GRU(ELMO_SIZE, TEMPLATE_ENCODING_SIZE_DIR,
-                                    num_layers=2, batch_first=True,
+        self.slot_encoder = nn.Sequential(
+            nn.Linear(2 * TEMPLATE_ENCODER_HIDDEN_SIZE,
+                      TEMPLATE_ENCODING_SIZE),
+            nn.PReLU(),
+            nn.Linear(TEMPLATE_ENCODING_SIZE, TEMPLATE_ENCODING_SIZE)
+            )
+        self.global_template_encoder = nn.Sequential(
+            nn.Linear(2 * TEMPLATE_ENCODER_HIDDEN_SIZE,
+                      GLOBAL_TEMPLATE_ENCODING_SIZE),
+            nn.PReLU(),
+            nn.Linear(GLOBAL_TEMPLATE_ENCODING_SIZE,
+                      GLOBAL_TEMPLATE_ENCODING_SIZE)
+            )
+
+        self.input_encoder = nn.GRU(ELMO_SIZE, INPUT_ENCODER_HIDDEN_SIZE,
+                                    num_layers=5, batch_first=True,
                                     bidirectional=True)
+        self.input_to_slot_encoder = nn.Sequential(
+            nn.Linear(2 * INPUT_ENCODER_HIDDEN_SIZE,
+                      TEMPLATE_ENCODING_SIZE),
+            nn.PReLU(),
+            nn.Linear(TEMPLATE_ENCODING_SIZE,
+                      TEMPLATE_ENCODING_SIZE)
+            )
+        # self.input_to_global_encoder = nn.Sequential(
+        #     nn.Linear(2 * INPUT_ENCODER_HIDDEN_SIZE,
+        #               TEMPLATE_ENCODING_SIZE),
+        #     nn.PReLU(),
+        #     nn.Linear(TEMPLATE_ENCODING_SIZE,
+        #               TEMPLATE_ENCODING_SIZE)
+        #     )
+        self.match_detector = nn.Sequential(
+            nn.Linear((GLOBAL_TEMPLATE_ENCODING_SIZE +
+                       2 * INPUT_ENCODER_HIDDEN_SIZE),
+                      TEMPLATE_ENCODING_SIZE),
+            nn.PReLU(),
+            nn.Linear(TEMPLATE_ENCODING_SIZE, 1)
+            )
         self.attention_adjust = nn.Linear(1, 1)
-        # self.attention_adjust.weight[0, 0] = 1.0
-        # self.attention_adjust.bias[0] = 0.0
-        self.match_prob_adjust = nn.Linear(1, 1)
-        # self.match_prob_adjust.weight[0, 0] = 1.0
-        # self.match_prob_adjust.bias[0] = 0.0
+        self.slot_match_prob_adjust = nn.Linear(1, 1)
 
     if H:
         self = TemplateMatcher()
@@ -79,7 +113,7 @@ class TemplateMatcher(nn.Module):
             slot_encodings.append([])
             slot_names.append([])
             for slot_name, index in slots.items():
-                slot_encoded = output[template_index, index]
+                slot_encoded = self.slot_encoder(output[template_index, index])
                 slot_encodings[-1].append(slot_encoded)
                 slot_names[-1].append(slot_name)
         slot_encodings[0][0].shape
@@ -92,22 +126,27 @@ class TemplateMatcher(nn.Module):
         assert padded_slots.shape[1] == max(len(s) for s in slot_encodings)
         assert padded_slots.shape[2] == TEMPLATE_ENCODING_SIZE
         num_slots = torch.tensor([float(len(slots)) for slots in slot_names])
+        edges = bidirectional_rnn_output_edges(output)
+        global_encodings = self.global_template_encoder(edges)
+        padded_slots.shape
         num_slots
         slot_names
-        return (padded_slots, num_slots), slot_names
+        global_encodings.shape
+        return (padded_slots, num_slots, global_encodings), slot_names
 
     if H:
-        templates = (padded_slots, num_slots)
+        templates = (padded_slots, num_slots, global_encodings)
         sentences = [['Call', 'me', 'KR', '.'],
                      ['I', 'am', 'called', 'KR', '.'],
                      ['I\'m', 'KR', '.']]
 
     def forward(self, templates, sentences):
-        padded_slots, num_slots = templates
+        padded_slots, num_slots, global_encodings = templates
         embedded = self.elmo(batch_to_ids(sentences))
         word_repr = torch.cat(embedded['elmo_representations'], dim=2)
         output, h = self.input_encoder(word_repr)
-        output_seq_last = output.transpose(1, 2)
+        output_slot_encoded = self.input_to_slot_encoder(output)
+        output_seq_last = output_slot_encoded.transpose(1, 2)
         output.shape
         padded_slots.unsqueeze(0).shape
         output_seq_last.unsqueeze(1).shape
@@ -122,6 +161,15 @@ class TemplateMatcher(nn.Module):
         assert attention.shape[2] == padded_slots.shape[1] # Number of slots
         assert attention.shape[3] == max(len(sent) for sent in sentences)
 
-        match_prob = (attention.sum(dim=3).sum(dim=2) / num_slots).unsqueeze(-1)
-        match_prob = self.match_prob_adjust(match_prob).squeeze(-1)
+        # edges = self.input_to_global_encoder(bidirectional_rnn_output_edges(output))
+        edges = bidirectional_rnn_output_edges(output).unsqueeze(1)
+        edges = edges.repeat(1, global_encodings.shape[0], 1)
+        edges.shape
+        global_encodings_with_sent_dim = global_encodings.unsqueeze(0).repeat(edges.shape[0], 1, 1)
+        global_encodings_with_sent_dim.shape
+        edges_and_global = torch.cat((global_encodings_with_sent_dim, edges), dim=2)
+        global_match_prob = self.match_detector(edges_and_global).squeeze(-1)
+        slot_match_prob = (attention.sum(dim=3).sum(dim=2) / num_slots).unsqueeze(-1)
+        slot_match_prob = self.slot_match_prob_adjust(slot_match_prob).squeeze(-1)
+        match_prob = global_match_prob + slot_match_prob
         return attention, match_prob
