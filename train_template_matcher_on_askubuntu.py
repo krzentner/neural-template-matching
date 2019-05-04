@@ -43,6 +43,47 @@ def train():
 
         random.shuffle(train_pairs)
 
+        def train_step(w_template, n_slots, sentence, should_match):
+            nonlocal running_samples
+            nonlocal running_loss
+            nonlocal running_accuracy
+            sentences = []
+            match_expectations = []
+            slot_expectations = []
+            for index_in_b, w_b in enumerate(sentence):
+                if w == w_b:
+                    slot_expectation = torch.tensor(index_in_b).reshape(1, 1, n_slots, 1)
+                    sentences.append(sentence)
+                    if should_match:
+                        match_expectations.append([1.])
+                    else:
+                        match_expectations.append([-1.])
+                    slot_expectations.append(slot_expectation)
+            slot_expectations = torch.cat(slot_expectations, dim=0)
+
+            opt.zero_grad()
+            encoded_template, slot_name = net.encode_templates([w_template])
+            slot_matches, temp_matches = net(encoded_template, sentences)
+            # slot_matches has shape:
+            # sentence, template, slot, word
+            expected_match_tensor = torch.tensor(match_expectations)
+            match_loss = match_crit(temp_matches, expected_match_tensor)
+
+            slot_matches_flat = slot_matches.flatten(0, 2)
+            slot_expectations_flat = slot_expectations.flatten(0, 3)
+            loss = slot_crit(slot_matches_flat, slot_expectations_flat)
+            best_slot_guess = slot_matches_flat.argmax()
+
+            total_loss = 4 * match_loss + loss
+            total_loss.backward()
+            opt.step()
+
+            accuracy = ((best_slot_guess == slot_expectations_flat).to(torch.float32)).mean()
+
+            running_accuracy = (running_samples * running_accuracy + accuracy) / (running_samples + 1)
+            running_loss = (running_samples * running_loss + total_loss) / (1 + running_samples)
+            running_samples += 1
+
         for i, (first_question, second_question, should_match) in enumerate(train_pairs):
             if H:
                 first_question, second_question, should_match = train_pairs[2]
@@ -63,50 +104,17 @@ def train():
                         w_template = list(a)
                         w_template[index_in_a] = f'<slot {w_slot}>'
                         n_slots = 1
+                        sentence = b
+                        train_step(w_template, n_slots, sentence, should_match)
+                        train_step(w_template, n_slots, a, True)
 
-                        sentences = []
-                        match_expectations = []
-                        slot_expectations = []
-                        for index_in_b, w_b in enumerate(b):
-                            if w == w_b:
-                                slot_expectation = torch.tensor(index_in_b).reshape(1, 1, n_slots, 1)
-                                sentences.append(b)
-                                if should_match:
-                                    match_expectations.append([1.])
-                                else:
-                                    match_expectations.append([-1.])
-                                slot_expectations.append(slot_expectation)
-                        slot_expectations = torch.cat(slot_expectations, dim=0)
-
-                        opt.zero_grad()
-                        encoded_template, slot_name = net.encode_templates([w_template])
-                        slot_matches, temp_matches = net(encoded_template, sentences)
-                        # slot_matches has shape:
-                        # sentence, template, slot, word
-                        expected_match_tensor = torch.tensor(match_expectations)
-                        match_loss = match_crit(temp_matches, expected_match_tensor)
-
-                        slot_matches_flat = slot_matches.flatten(0, 2)
-                        slot_expectations_flat = slot_expectations.flatten(0, 3)
-                        loss = slot_crit(slot_matches_flat, slot_expectations_flat)
-                        best_slot_guess = slot_matches_flat.argmax()
-
-                        total_loss = match_loss + loss
-                        total_loss.backward()
-                        opt.step()
-
-                        accuracy = ((best_slot_guess == slot_expectations_flat).to(torch.float32)).mean()
-
-                        running_accuracy = (running_samples * running_accuracy + accuracy) / (running_samples + 1)
-                        running_loss = (running_samples * running_loss + total_loss) / (1 + running_samples)
-                        running_samples += 1
 
             if i % 10 == 0 and i > 0:
                 print(f'epoch {epoch}, iter {i} loss: {running_loss}, accuracy: {running_accuracy}')
                 running_loss = 0.0
                 running_accuracy = 0.0
                 running_samples = 0
-            if i % 1000 == 0 and i > 0:
+            if i % 100 == 0 and i > 0:
                 print('Saving checkpoint mid epoch')
                 checkpoint = {
                     'model': net.state_dict(),
