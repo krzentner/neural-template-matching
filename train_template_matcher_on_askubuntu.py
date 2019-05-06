@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import random
+import numpy as np
 
 import importlib
 importlib.reload(template_matcher)
@@ -43,23 +44,25 @@ def train():
 
         random.shuffle(train_pairs)
 
-        def train_step(w_template, n_slots, sentence, should_match):
+        def train_step(w_template, triples):
             nonlocal running_samples
             nonlocal running_loss
             nonlocal running_accuracy
-            sentences = []
-            match_expectations = []
-            slot_expectations = []
-            for index_in_b, w_b in enumerate(sentence):
-                if w == w_b:
-                    slot_expectation = torch.tensor(index_in_b).reshape(1, 1, n_slots, 1)
-                    sentences.append(sentence)
-                    if should_match:
-                        match_expectations.append([1.])
-                    else:
-                        match_expectations.append([-1.])
-                    slot_expectations.append(slot_expectation)
-            slot_expectations = torch.cat(slot_expectations, dim=0)
+            sentences = [triple[0] for triple in triples]
+            slot_expectations = torch.tensor([triple[1] for triple in triples])
+            match_expectations = [1. if triple[2] else -1. for triple in triples]
+
+            # for index_in_b, w_b in enumerate(sentence):
+            #     if w == w_b:
+            #         slot_expectation = torch.tensor(index_in_b).reshape(1, 1, n_slots, 1)
+            #         sentences.append(sentence)
+            #         if should_match:
+            #             match_expectations.append([1.])
+            #         else:
+            #             match_expectations.append([-1.])
+            #         slot_expectations.append(slot_expectation)
+            #
+            # slot_expectations = torch.cat(slot_expectations, dim=0)
 
             opt.zero_grad()
             encoded_template, slot_name = net.encode_templates([w_template])
@@ -70,7 +73,7 @@ def train():
             match_loss = match_crit(temp_matches, expected_match_tensor)
 
             slot_matches_flat = slot_matches.flatten(0, 2)
-            slot_expectations_flat = slot_expectations.flatten(0, 3)
+            slot_expectations_flat = slot_expectations
             loss = slot_crit(slot_matches_flat, slot_expectations_flat)
             best_slot_guess = slot_matches_flat.argmax()
 
@@ -99,14 +102,38 @@ def train():
                 for index_in_a, w in enumerate(a):
                     if H:
                         index_in_a, w = next(enumerate(a))
-                    if len(w) > 2 and w in b:
-                        w_slot = random.randrange(template_matcher.TEMPLATE_SLOT_SIZE)
-                        w_template = list(a)
-                        w_template[index_in_a] = f'<slot {w_slot}>'
-                        n_slots = 1
-                        sentence = b
-                        train_step(w_template, n_slots, sentence, should_match)
-                        train_step(w_template, n_slots, a, True)
+                    w_slot = random.randrange(template_matcher.TEMPLATE_SLOT_SIZE)
+                    w_template = list(a)
+                    w_template[index_in_a] = f'<slot w[index_in_a]>'
+                    triples = []
+                    for index, wb in enumerate(b):
+                        if H:
+                            index, wb = next(enumerate(b))
+                        if wb == w and len(w) > 2:
+                            # Cross-example match!
+                            triples.append((b, index, should_match))
+                        else:
+                            if index >= len(a):
+                                continue
+                            s = list(a)
+                            if random.getrandbits(1) or index == index_in_a:
+                                # Clobber the word from a with one from b.
+                                s[index] = wb
+                                triples.append((s, index_in_a, True))
+                            else:
+                                # Delete the word at `index`.
+                                del s[index]
+                                if index > index_in_a:
+                                    triples.append((s, index_in_a, True))
+                                else:
+                                    triples.append((s, index_in_a - 1, True))
+                        # Balance out match and not-match by using (not matching) shuffled input.
+                        # Note: since bag-of-words should sort of work, this is probably a bad method.
+                        shuffling = list(np.random.permutation(len(a)))
+                        a_shuffled = [a[shuffle] for shuffle in shuffling]
+                        shuffled_index = shuffling.index(index_in_a)
+                        triples.append((a_shuffled, shuffled_index, False))
+                    train_step(w_template, triples)
 
 
             if i % 10 == 0 and i > 0:

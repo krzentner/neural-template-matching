@@ -9,12 +9,11 @@ OPTIONS_FILE = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_5
 WEIGHT_FILE = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"
 
 ELMO_SIZE = 2048
-HIDDEN_SIZE = 1024
-GLOBAL_TEMPLATE_ENCODING_SIZE = 512
-TEMPLATE_ENCODING_SIZE = 512
+GLOBAL_TEMPLATE_ENCODING_SIZE = 256
+TEMPLATE_ENCODING_SIZE = 128
 TEMPLATE_ENCODING_SIZE_DIR = int(TEMPLATE_ENCODING_SIZE / 2)
-TEMPLATE_ENCODER_HIDDEN_SIZE = 512
-INPUT_ENCODER_HIDDEN_SIZE = 512
+TEMPLATE_ENCODER_HIDDEN_SIZE = 256
+INPUT_ENCODER_HIDDEN_SIZE = 128
 TEMPLATE_SLOT_SIZE = 1
 
 H = False
@@ -38,7 +37,7 @@ class TemplateMatcher(nn.Module):
         self.elmo = Elmo(OPTIONS_FILE, WEIGHT_FILE, 2, dropout=0)
         self.template_encoder = nn.GRU(ELMO_SIZE + TEMPLATE_SLOT_SIZE,
                                        TEMPLATE_ENCODER_HIDDEN_SIZE,
-                                       num_layers=5, batch_first=True,
+                                       num_layers=2, batch_first=True,
                                        bidirectional=True)
         self.slot_encoder = nn.Sequential(
             nn.Linear(2 * TEMPLATE_ENCODER_HIDDEN_SIZE,
@@ -55,7 +54,7 @@ class TemplateMatcher(nn.Module):
             )
 
         self.input_encoder = nn.GRU(ELMO_SIZE, INPUT_ENCODER_HIDDEN_SIZE,
-                                    num_layers=5, batch_first=True,
+                                    num_layers=2, batch_first=True,
                                     bidirectional=True)
         self.input_to_slot_encoder = nn.Sequential(
             nn.Linear(2 * INPUT_ENCODER_HIDDEN_SIZE,
@@ -64,13 +63,6 @@ class TemplateMatcher(nn.Module):
             nn.Linear(TEMPLATE_ENCODING_SIZE,
                       TEMPLATE_ENCODING_SIZE)
             )
-        # self.input_to_global_encoder = nn.Sequential(
-        #     nn.Linear(2 * INPUT_ENCODER_HIDDEN_SIZE,
-        #               TEMPLATE_ENCODING_SIZE),
-        #     nn.PReLU(),
-        #     nn.Linear(TEMPLATE_ENCODING_SIZE,
-        #               TEMPLATE_ENCODING_SIZE)
-        #     )
         self.match_detector = nn.Sequential(
             nn.Linear((GLOBAL_TEMPLATE_ENCODING_SIZE +
                        2 * INPUT_ENCODER_HIDDEN_SIZE),
