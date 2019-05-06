@@ -48,21 +48,13 @@ def train():
             nonlocal running_samples
             nonlocal running_loss
             nonlocal running_accuracy
+            # print(w_template)
+            # print(triples)
+            # print()
+            # print()
             sentences = [triple[0] for triple in triples]
             slot_expectations = torch.tensor([triple[1] for triple in triples])
             match_expectations = [1. if triple[2] else -1. for triple in triples]
-
-            # for index_in_b, w_b in enumerate(sentence):
-            #     if w == w_b:
-            #         slot_expectation = torch.tensor(index_in_b).reshape(1, 1, n_slots, 1)
-            #         sentences.append(sentence)
-            #         if should_match:
-            #             match_expectations.append([1.])
-            #         else:
-            #             match_expectations.append([-1.])
-            #         slot_expectations.append(slot_expectation)
-            #
-            # slot_expectations = torch.cat(slot_expectations, dim=0)
 
             opt.zero_grad()
             encoded_template, slot_name = net.encode_templates([w_template])
@@ -104,7 +96,7 @@ def train():
                         index_in_a, w = next(enumerate(a))
                     w_slot = random.randrange(template_matcher.TEMPLATE_SLOT_SIZE)
                     w_template = list(a)
-                    w_template[index_in_a] = f'<slot w[index_in_a]>'
+                    w_template[index_in_a] = f'<{random.choice(b)}>'
                     triples = []
                     for index, wb in enumerate(b):
                         if H:
