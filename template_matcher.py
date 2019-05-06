@@ -161,7 +161,7 @@ class TemplateMatcher(nn.Module):
         global_encodings_with_sent_dim.shape
         edges_and_global = torch.cat((global_encodings_with_sent_dim, edges), dim=2)
         global_match_prob = self.match_detector(edges_and_global).squeeze(-1)
-        slot_match_prob = (attention.sum(dim=3).sum(dim=2) / num_slots).unsqueeze(-1)
+        slot_match_prob = (attention.sum(dim=3).sum(dim=2) / num_slots).unsqueeze(-1).detach() # Don't propagate gradient information here.
         slot_match_prob = self.slot_match_prob_adjust(slot_match_prob).squeeze(-1)
         match_prob = global_match_prob + slot_match_prob
         return attention, match_prob
